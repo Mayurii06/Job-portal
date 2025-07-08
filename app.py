@@ -1,14 +1,18 @@
 from flask import Flask, request, jsonify
 import mysql.connector
 import bcrypt
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
+import pandas as pd
+
 
 app = Flask(__name__)
 
 # MySQL connection configuration
 db_config = {
     'host': 'localhost',
-    'user': 'root',
-    'password': '2405',
+    'user': 'mayuri',
+    'password': 'mypassword123',
     'database': 'job_portal'
 }
 
@@ -120,6 +124,43 @@ def apply():
     finally:
         cursor.close()
         conn.close()
+@app.route('/recommend/<int:user_id>', methods=['GET'])
+def recommend_jobs(user_id):
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+
+    # Get the user's skills
+    cursor.execute("SELECT skills FROM users WHERE user_id = %s", (user_id,))
+    user = cursor.fetchone()
+    if not user:
+        return jsonify({'error': 'User not found'}), 404
+
+    user_skills = user['skills']
+
+    # Get all jobs
+    cursor.execute("SELECT * FROM jobs")
+    jobs = cursor.fetchall()
+    if not jobs:
+        return jsonify({'message': 'No jobs found'}), 200
+
+    # Prepare data for similarity
+    df = pd.DataFrame(jobs)
+    df['text'] = df['title'] + ' ' + df['company'] + ' ' + df['description']
+
+    # Compute similarity
+    corpus = [user_skills] + df['text'].tolist()
+    vectorizer = TfidfVectorizer()
+    tfidf_matrix = vectorizer.fit_transform(corpus)
+    cosine_similarities = cosine_similarity(tfidf_matrix[0:1], tfidf_matrix[1:]).flatten()
+
+    df['score'] = cosine_similarities
+    top_jobs = df.sort_values(by='score', ascending=False).head(5)
+
+    cursor.close()
+    conn.close()
+
+    return jsonify(top_jobs[['job_id', 'title', 'company', 'location', 'description', 'score']].to_dict(orient='records'))
+
 
 
 if __name__ == '__main__':
