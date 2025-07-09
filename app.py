@@ -1,21 +1,23 @@
 from flask import Flask, request, jsonify
 import mysql.connector
+import bcrypt
 
 app = Flask(__name__)
 
 # MySQL connection configuration
 db_config = {
     'host': 'localhost',
-    'user': 'mayuri',
-    'password': 'mypassword123',
+    'user': 'root',
+    'password': '2405',
     'database': 'job_portal'
 }
-
 
 def get_db_connection():
     return mysql.connector.connect(**db_config)
 
-# Route: Register User
+
+# Register User Route
+
 @app.route('/register', methods=['POST'])
 def register():
     data = request.json
@@ -24,20 +26,70 @@ def register():
     password = data['password']
     skills = data.get('skills', '')
 
+    # Encode and hash password
+    password_bytes = password.encode('utf-8')
+    hashed_password = bcrypt.hashpw(password_bytes, bcrypt.gensalt()).decode('utf-8')
+
     conn = get_db_connection()
     cursor = conn.cursor()
+
     try:
-        cursor.execute("INSERT INTO users (name, email, password, skills) VALUES (%s, %s, %s, %s)",
-                       (name, email, password, skills))
+        # Check for duplicate email
+        cursor.execute("SELECT id FROM users WHERE email = %s", (email,))
+        if cursor.fetchone():
+            return jsonify({'error': 'Email already registered'}), 409
+
+        # Insert user
+        cursor.execute(
+            "INSERT INTO users (name, email, password, skills) VALUES (%s, %s, %s, %s)",
+            (name, email, hashed_password, skills)
+        )
         conn.commit()
         return jsonify({'message': 'User registered successfully!'}), 201
+
     except mysql.connector.Error as err:
         return jsonify({'error': str(err)}), 400
+
     finally:
         cursor.close()
         conn.close()
 
-# Route: List Jobs
+
+# Login Part
+
+@app.route('/login', methods=['POST'])
+def login():
+    data = request.json
+    email = data['email']
+    password = data['password'].encode('utf-8')  # Encode to bytes
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute("SELECT id, password FROM users WHERE email = %s", (email,))
+        result = cursor.fetchone()
+
+        if not result:
+            return jsonify({'error': 'User not found'}), 404
+
+        user_id, stored_hashed_password = result
+        stored_hashed_password = stored_hashed_password.encode('utf-8')  # Convert to bytes
+
+        if bcrypt.checkpw(password, stored_hashed_password):
+            return jsonify({'message': 'Login successful!', 'user_id': user_id}), 200
+        else:
+            return jsonify({'error': 'Incorrect password'}), 401
+
+    except mysql.connector.Error as err:
+        return jsonify({'error': str(err)}), 400
+
+    finally:
+        cursor.close()
+        conn.close()
+
+
+# Route List Jobs  Route 
 @app.route('/jobs', methods=['GET'])
 def get_jobs():
     conn = get_db_connection()
@@ -48,7 +100,9 @@ def get_jobs():
     conn.close()
     return jsonify(jobs)
 
-# Route: Apply for a job
+
+#  Apply for a Job  Route 
+
 @app.route('/apply', methods=['POST'])
 def apply():
     data = request.json
@@ -66,6 +120,7 @@ def apply():
     finally:
         cursor.close()
         conn.close()
+
 
 if __name__ == '__main__':
     app.run(debug=True)
